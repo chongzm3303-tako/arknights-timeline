@@ -16,6 +16,27 @@ function meta(s){
   return m;
 }
 
+const FLAG = /(Speculation|Disputed in part|Disputed|Partly confirmed|Plausible|Confirmed|Unchecked|Conflict)( \([^)]{0,90}\))?: /g;
+const FLAG_CLASS = {"Speculation":"spec","Disputed":"disp","Disputed in part":"disp","Conflict":"disp","Confirmed":"ok"};
+
+/* Turns a leading label such as "Speculation (no source found yet):" into a small badge. */
+function para(text){
+  const p = h("p"); let last = 0, count = 0, m;
+  FLAG.lastIndex = 0;
+  while ((m = FLAG.exec(text))){
+    if (m.index > 0 && !/[.!?"')]\s*$/.test(text.slice(0, m.index))) continue;
+    p.append(document.createTextNode(text.slice(last, m.index)));
+    const label = m[1], note = m[2] || "";
+    const unsourced = label === "Speculation" && /no source found/.test(note);
+    const b = h("span", "flag f-" + (FLAG_CLASS[label] || "mute"));
+    const vis = h("span", "", unsourced ? "Unsourced" : label); vis.setAttribute("aria-hidden", "true");
+    b.append(vis, h("span", "sr", label + note + ":"));
+    p.append(b); last = m.index + m[0].length; count++;
+  }
+  p.append(document.createTextNode(text.slice(last)));
+  return {p, count};
+}
+
 function home(){
   const f = document.createDocumentFragment();
   const head = h("header");
@@ -41,22 +62,17 @@ function home(){
 
 function detail(i){
   const s = STORIES[i], f = document.createDocumentFragment();
-  const art = h("article", "detail");
+  const grid = h("div", "cols"), main = h("article", "main");
   const back = link("#", "back"); back.textContent = "Back to timeline";
   const t = h("h1", "", s.title); t.tabIndex = -1;
-  art.append(back, meta(s), t);
-  if (s.summary) art.append(h("p", "summary", s.summary));
-  art.append(h("div", "stripe"));
-  const text = h("div", "text");
-  if (s.body && s.body.length) s.body.forEach(p => text.append(h("p", "", p)));
+  main.append(back, meta(s), t);
+  if (s.summary) main.append(h("p", "summary", s.summary));
+  main.append(h("div", "stripe"));
+  const text = h("div", "text"); let flags = 0;
+  if (s.body && s.body.length) s.body.forEach(x => { const r = para(x); flags += r.count; text.append(r.p); });
   else text.append(h("p", "", "The full story text has not been added yet."));
-  art.append(text);
-  if (s.characters && s.characters.length){
-    art.append(h("h2", "", "Characters"));
-    const ul = h("ul", "chars");
-    s.characters.forEach(c => ul.append(h("li", "tag", c)));
-    art.append(ul);
-  }
+  if (flags) main.append(h("p", "legend", "Labels in the text: Unsourced means no source found yet. Speculation, Plausible and Unchecked are not confirmed. Disputed means sources disagree."));
+  main.append(text);
   const pager = h("nav", "pager"); pager.setAttribute("aria-label", "Neighbouring stories");
   [[i - 1, "prev", "Earlier"], [i + 1, "next", "Later"]].forEach(([j, cls, label]) => {
     if (!STORIES[j]) return;
@@ -64,8 +80,28 @@ function detail(i){
     a.append(h("small", "", label), document.createTextNode(STORIES[j].title));
     pager.append(a);
   });
-  art.append(pager);
-  f.append(art);
+  main.append(pager);
+  grid.append(main);
+  /* Right rail: characters, open when there is room. */
+  if (s.characters && s.characters.length){
+    const side = h("aside", "rail rail-r"), box = h("details", "chars-box");
+    box.open = !!(window.matchMedia && window.matchMedia("(min-width:1200px)").matches);
+    box.append(h("summary", "", "Characters (" + s.characters.length + ")"));
+    const ul = h("ul", "chars");
+    s.characters.forEach(c => ul.append(h("li", "tag", c)));
+    box.append(ul); side.append(box); grid.append(side);
+  }
+  /* Left rail: every story, current one marked. Hidden on narrow screens. */
+  const nav = h("nav", "rail rail-l"); nav.setAttribute("aria-label", "All stories");
+  nav.append(h("h2", "", "All stories"));
+  const ol = h("ol", "navlist");
+  STORIES.forEach((x, k) => {
+    const li = h("li"), a = link("#" + x.id, "navlink"); a.textContent = x.title;
+    if (k === i) a.setAttribute("aria-current", "page");
+    li.append(a); ol.append(li);
+  });
+  nav.append(ol); grid.append(nav);
+  f.append(grid);
   return f;
 }
 
@@ -73,6 +109,7 @@ function route(first){
   const id = decodeURIComponent(location.hash.slice(1));
   const i = STORIES.findIndex(s => s.id === id);
   view = i < 0 ? "home" : "detail";
+  app.dataset.view = view;
   app.replaceChildren(i < 0 ? home() : detail(i));
   document.title = i < 0 ? SITE : STORIES[i].title + " | " + SITE;
   window.scrollTo(0, view === "home" ? homeY : 0);
